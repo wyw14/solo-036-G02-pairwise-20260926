@@ -108,17 +108,20 @@ type OperationRecord struct {
 }
 
 type ControlSnapshot struct {
-	Revision   string          `json:"revision"`
-	CapturedAt time.Time       `json:"captured_at"`
-	Stations   []Station       `json:"stations"`
-	Valves     []ValveState    `json:"valves"`
-	Closures   []ClosureState  `json:"closures"`
-	Pressures  []PressureState `json:"pressures"`
-	Routes     []RouteState    `json:"routes"`
-	Tracking   []TrackingState `json:"tracking"`
-	Permits    []PermitState   `json:"permits"`
-	Runs       []Run           `json:"runs"`
-	Incidents  []Incident      `json:"incidents"`
+	Revision      string          `json:"revision"`
+	CapturedAt    time.Time       `json:"captured_at"`
+	Stations      []Station       `json:"stations"`
+	Valves        []ValveState    `json:"valves"`
+	Closures      []ClosureState  `json:"closures"`
+	Pressures     []PressureState `json:"pressures"`
+	Routes        []RouteState    `json:"routes"`
+	Tracking      []TrackingState `json:"tracking"`
+	Permits       []PermitState   `json:"permits"`
+	Runs          []Run           `json:"runs"`
+	Incidents     []Incident      `json:"incidents"`
+	Pigs          []Pig           `json:"pigs"`
+	PigComponents []PigComponent  `json:"pig_components"`
+	Assessments   []FitAssessment `json:"assessments"`
 }
 
 func (s Station) Validate() error {
@@ -266,6 +269,36 @@ func (s ControlSnapshot) Validate() error {
 	for _, permit := range s.Permits {
 		if err := permit.Validate(); err != nil {
 			return fmt.Errorf("permit %s: %w", permit.Name, err)
+		}
+	}
+	pigs := make(map[string]Pig, len(s.Pigs))
+	for _, pig := range s.Pigs {
+		if err := pig.Validate(); err != nil {
+			return fmt.Errorf("pig %s: %w", pig.ID, err)
+		}
+		pigs[pig.ID] = pig
+	}
+	for _, component := range s.PigComponents {
+		if err := component.Validate(); err != nil {
+			return fmt.Errorf("pig component %s: %w", component.ID, err)
+		}
+		if _, ok := pigs[component.PigID]; !ok {
+			return fmt.Errorf("pig component %s references unknown pig %s", component.ID, component.PigID)
+		}
+	}
+	routes := make(map[string]RouteState, len(s.Routes))
+	for _, route := range s.Routes {
+		routes[route.ID] = route
+	}
+	for _, assessment := range s.Assessments {
+		if err := assessment.Validate(); err != nil {
+			return fmt.Errorf("assessment %s: %w", assessment.ID, err)
+		}
+		if _, ok := pigs[assessment.PigID]; !ok {
+			return fmt.Errorf("assessment %s references unknown pig %s", assessment.ID, assessment.PigID)
+		}
+		if _, ok := routes[assessment.RouteID]; !ok {
+			return fmt.Errorf("assessment %s references unknown route %s", assessment.ID, assessment.RouteID)
 		}
 	}
 	return nil

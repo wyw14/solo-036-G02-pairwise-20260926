@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -207,6 +208,37 @@ func (n *Network) Path(from, to string, requestedPressure float64) (Path, error)
 		}
 	}
 	return Path{}, fmt.Errorf("no enabled route from %s to %s at pressure %.2f", from, to, requestedPressure)
+}
+
+func (n *Network) Constraint(from, to string) (model.LineConstraint, error) {
+	fromStation, ok := n.stations[from]
+	if !ok {
+		return model.LineConstraint{}, fmt.Errorf("unknown source station %s", from)
+	}
+	toStation, ok := n.stations[to]
+	if !ok {
+		return model.LineConstraint{}, fmt.Errorf("unknown destination station %s", to)
+	}
+	path, err := n.Path(from, to, minimumPressure(fromStation.PressureLimit, toStation.PressureLimit))
+	if err != nil {
+		return model.LineConstraint{}, err
+	}
+	ceiling := math.Inf(1)
+	for _, stationID := range path.Stations {
+		if limit := n.stations[stationID].PressureLimit; limit < ceiling {
+			ceiling = limit
+		}
+	}
+	for _, segmentID := range path.Segments {
+		if limit := n.segments[segmentID].MaximumPressure; limit < ceiling {
+			ceiling = limit
+		}
+	}
+	return model.LineConstraint{
+		Stations:    path.Stations,
+		Segments:    path.Segments,
+		MaxPressure: ceiling,
+	}, nil
 }
 
 func appendCopy(values []string, value string) []string {

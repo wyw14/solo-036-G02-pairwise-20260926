@@ -24,6 +24,7 @@ type createRequest struct {
 	StationID      string  `json:"station_id"`
 	RouteID        string  `json:"route_id"`
 	TargetPressure float64 `json:"target_pressure"`
+	PigID          string  `json:"pig_id"`
 }
 
 type trackRequest struct {
@@ -97,6 +98,7 @@ func (h *Handler) Launch(w http.ResponseWriter, r *http.Request) {
 		StationID:      request.StationID,
 		RouteID:        request.RouteID,
 		TargetPressure: request.TargetPressure,
+		PigID:          request.PigID,
 	})
 	if err != nil {
 		writeError(w, r, http.StatusConflict, err)

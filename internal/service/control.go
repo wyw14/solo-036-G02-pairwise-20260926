@@ -13,6 +13,7 @@ import (
 	"github.com/wyw14/solo-036/internal/launcher"
 	"github.com/wyw14/solo-036/internal/model"
 	"github.com/wyw14/solo-036/internal/permit"
+	"github.com/wyw14/solo-036/internal/pig"
 	"github.com/wyw14/solo-036/internal/receiver"
 	"github.com/wyw14/solo-036/internal/route"
 	"github.com/wyw14/solo-036/internal/run"
@@ -37,6 +38,7 @@ type LaunchRequest struct {
 	StationID      string  `json:"station_id"`
 	RouteID        string  `json:"route_id"`
 	TargetPressure float64 `json:"target_pressure"`
+	PigID          string  `json:"pig_id,omitempty"`
 }
 
 type TrackingRequest struct {
@@ -56,6 +58,7 @@ type RecoveryReport struct {
 	RecoveredRuns    int  `json:"recovered_runs"`
 	RecoveredRoutes  int  `json:"recovered_routes"`
 	RecoveredPermits int  `json:"recovered_permits"`
+	RecoveredPigs    int  `json:"recovered_pigs"`
 	JournalEvents    int  `json:"journal_events"`
 	Ready            bool `json:"ready"`
 }
@@ -189,6 +192,22 @@ func (r *Runtime) ValidateLaunchRequest(request LaunchRequest) error {
 	if request.TargetPressure <= 0 || request.TargetPressure > station.PressureLimit {
 		return fmt.Errorf("target pressure must be within 0 and %.2f", station.PressureLimit)
 	}
+	if request.PigID != "" {
+		selected, ok := r.Pigs.Get(request.PigID)
+		if !ok {
+			return fmt.Errorf("unknown pig %s", request.PigID)
+		}
+		assessment, ok := r.Pigs.Current(request.PigID, request.RouteID)
+		if !ok {
+			return fmt.Errorf("pig %s has no current fit assessment for route %s", request.PigID, request.RouteID)
+		}
+		if !assessment.Fit {
+			return fmt.Errorf("pig %s is not fit for route %s: %s", request.PigID, request.RouteID, failedCheckDetails(assessment))
+		}
+		if request.TargetPressure > selected.MaxPressure {
+			return fmt.Errorf("target pressure %.2f exceeds pig max pressure %.2f", request.TargetPressure, selected.MaxPressure)
+		}
+	}
 	return nil
 }
 
@@ -263,11 +282,15 @@ func (r *Runtime) Launch(ctx context.Context, request LaunchRequest) (model.Oper
 	control.Valves[valveState.ID] = valveState
 	control.Revision = model.NewRevision()
 	r.mu.Unlock()
+	launchPayload := request.RouteID
+	if request.PigID != "" {
+		launchPayload = request.RouteID + "/pig/" + request.PigID
+	}
 	if err := r.appendEvent(model.Event{
 		RunID:   created.ID,
 		Kind:    "launch",
 		Epoch:   closureEpoch,
-		Payload: request.RouteID,
+		Payload: launchPayload,
 		At:      now,
 	}); err != nil {
 		return model.OperationRecord{}, err
@@ -497,20 +520,24 @@ func (r *Runtime) Operation(runID string) (model.OperationRecord, error) {
 
 func (r *Runtime) Snapshot() model.ControlSnapshot {
 	control := r.ensureControl()
+	pigs, pigComponents, assessments := r.Pigs.Snapshot()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	snapshot := model.ControlSnapshot{
-		Revision:   control.Revision,
-		CapturedAt: time.Now().UTC(),
-		Stations:   make([]model.Station, 0, len(control.Stations)),
-		Valves:     make([]model.ValveState, 0, len(control.Valves)),
-		Closures:   make([]model.ClosureState, 0, len(control.Closures)),
-		Pressures:  make([]model.PressureState, 0, len(control.Pressures)),
-		Routes:     make([]model.RouteState, 0, len(control.Routes)),
-		Tracking:   make([]model.TrackingState, 0),
-		Permits:    make([]model.PermitState, 0),
-		Runs:       r.Runs.Snapshot(),
-		Incidents:  append([]model.Incident(nil), control.Incidents...),
+		Revision:      control.Revision,
+		CapturedAt:    time.Now().UTC(),
+		Stations:      make([]model.Station, 0, len(control.Stations)),
+		Valves:        make([]model.ValveState, 0, len(control.Valves)),
+		Closures:      make([]model.ClosureState, 0, len(control.Closures)),
+		Pressures:     make([]model.PressureState, 0, len(control.Pressures)),
+		Routes:        make([]model.RouteState, 0, len(control.Routes)),
+		Tracking:      make([]model.TrackingState, 0),
+		Permits:       make([]model.PermitState, 0),
+		Runs:          r.Runs.Snapshot(),
+		Incidents:     append([]model.Incident(nil), control.Incidents...),
+		Pigs:          pigs,
+		PigComponents: pigComponents,
+		Assessments:   assessments,
 	}
 	for _, value := range control.Stations {
 		snapshot.Stations = append(snapshot.Stations, value)
@@ -565,6 +592,7 @@ func (r *Runtime) RecoverPersistent() (RecoveryReport, error) {
 		return RecoveryReport{}, err
 	}
 	run.Restore(r.Runs, snapshot.Control.Runs)
+	pig.Restore(r.Pigs, snapshot.Control.Pigs, snapshot.Control.PigComponents, snapshot.Control.Assessments)
 	leasing := make([]model.RouteLease, 0)
 	for _, routeState := range snapshot.Control.Routes {
 		if routeState.Reserved {
@@ -627,6 +655,7 @@ func (r *Runtime) RecoverPersistent() (RecoveryReport, error) {
 		RecoveredRuns:    len(snapshot.Control.Runs),
 		RecoveredRoutes:  len(leasing),
 		RecoveredPermits: len(permitEvents),
+		RecoveredPigs:    len(snapshot.Control.Pigs),
 		JournalEvents:    len(events),
 		Ready:            true,
 	}, nil
