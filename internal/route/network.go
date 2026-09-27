@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -16,6 +17,7 @@ type Segment struct {
 	To              string  `json:"to"`
 	Length          float64 `json:"length"`
 	MaximumPressure float64 `json:"maximum_pressure"`
+	Diameter        float64 `json:"diameter"`
 	Enabled         bool    `json:"enabled"`
 }
 
@@ -36,6 +38,7 @@ type pathCandidate struct {
 	station  string
 	distance float64
 	pressure float64
+	diameter float64
 	stations []string
 	segments []string
 	index    int
@@ -104,6 +107,9 @@ func (n *Network) addSegment(segment Segment) error {
 	}
 	if segment.MaximumPressure <= 0 {
 		return fmt.Errorf("segment %s pressure limit must be positive", segment.ID)
+	}
+	if segment.Diameter <= 0 {
+		return fmt.Errorf("segment %s diameter must be positive", segment.ID)
 	}
 	n.segments[segment.ID] = segment
 	n.outgoing[segment.From] = append(n.outgoing[segment.From], segment.ID)
@@ -209,6 +215,47 @@ func (n *Network) Path(from, to string, requestedPressure float64) (Path, error)
 	return Path{}, fmt.Errorf("no enabled route from %s to %s at pressure %.2f", from, to, requestedPressure)
 }
 
+// Limits describes the physical restrictions a pigging run must respect along
+// the shortest enabled path: the tightest bore and the lowest pressure rating.
+type Limits struct {
+	Stations []string `json:"stations"`
+	Segments []string `json:"segments"`
+	Length   float64  `json:"length"`
+	Pressure float64  `json:"pressure"`
+	Diameter float64  `json:"diameter"`
+}
+
+func (n *Network) Limits(from, to string) (Limits, error) {
+	if _, ok := n.stations[from]; !ok {
+		return Limits{}, fmt.Errorf("unknown source station %s", from)
+	}
+	if _, ok := n.stations[to]; !ok {
+		return Limits{}, fmt.Errorf("unknown destination station %s", to)
+	}
+	queue := candidateHeap{}
+	heap.Init(&queue)
+	heap.Push(&queue, &pathCandidate{station: from, distance: 0, pressure: math.MaxFloat64, diameter: math.MaxFloat64, stations: []string{from}, segments: []string{}})
+	best := make(map[string]float64)
+	for queue.Len() > 0 {
+		candidate := heap.Pop(&queue).(*pathCandidate)
+		if distance, ok := best[candidate.station]; ok && distance <= candidate.distance {
+			continue
+		}
+		best[candidate.station] = candidate.distance
+		if candidate.station == to {
+			return Limits{Stations: candidate.stations, Segments: candidate.segments, Length: candidate.distance, Pressure: candidate.pressure, Diameter: candidate.diameter}, nil
+		}
+		for _, segmentID := range n.outgoing[candidate.station] {
+			segment := n.segments[segmentID]
+			if !segment.Enabled {
+				continue
+			}
+			heap.Push(&queue, &pathCandidate{station: segment.To, distance: candidate.distance + segment.Length, pressure: min(candidate.pressure, segment.MaximumPressure), diameter: min(candidate.diameter, segment.Diameter), stations: appendCopy(candidate.stations, segment.To), segments: appendCopy(candidate.segments, segment.ID)})
+		}
+	}
+	return Limits{}, fmt.Errorf("no enabled route from %s to %s", from, to)
+}
+
 func appendCopy(values []string, value string) []string {
 	out := make([]string, len(values), len(values)+1)
 	copy(out, values)
@@ -253,8 +300,8 @@ func DefaultNetwork() *Network {
 		{ID: "station-c", Name: "South Receiver", Role: model.StationReceiver, Kilometer: 173.2, PressureLimit: 11.2, Enabled: true},
 	}
 	segments := []Segment{
-		{ID: "segment-a-b", From: "station-a", To: "station-b", Length: 86.4, MaximumPressure: 11.8, Enabled: true},
-		{ID: "segment-b-c", From: "station-b", To: "station-c", Length: 86.8, MaximumPressure: 11.2, Enabled: true},
+		{ID: "segment-a-b", From: "station-a", To: "station-b", Length: 86.4, MaximumPressure: 11.8, Diameter: 711, Enabled: true},
+		{ID: "segment-b-c", From: "station-b", To: "station-c", Length: 86.8, MaximumPressure: 11.2, Diameter: 660, Enabled: true},
 	}
 	network, err := NewNetwork(stations, segments)
 	if err != nil {

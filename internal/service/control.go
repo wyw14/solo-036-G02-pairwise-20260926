@@ -13,6 +13,7 @@ import (
 	"github.com/wyw14/solo-036/internal/launcher"
 	"github.com/wyw14/solo-036/internal/model"
 	"github.com/wyw14/solo-036/internal/permit"
+	"github.com/wyw14/solo-036/internal/pig"
 	"github.com/wyw14/solo-036/internal/receiver"
 	"github.com/wyw14/solo-036/internal/route"
 	"github.com/wyw14/solo-036/internal/run"
@@ -499,18 +500,21 @@ func (r *Runtime) Snapshot() model.ControlSnapshot {
 	control := r.ensureControl()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	pigs, compatibility := r.Pigs.Snapshot()
 	snapshot := model.ControlSnapshot{
-		Revision:   control.Revision,
-		CapturedAt: time.Now().UTC(),
-		Stations:   make([]model.Station, 0, len(control.Stations)),
-		Valves:     make([]model.ValveState, 0, len(control.Valves)),
-		Closures:   make([]model.ClosureState, 0, len(control.Closures)),
-		Pressures:  make([]model.PressureState, 0, len(control.Pressures)),
-		Routes:     make([]model.RouteState, 0, len(control.Routes)),
-		Tracking:   make([]model.TrackingState, 0),
-		Permits:    make([]model.PermitState, 0),
-		Runs:       r.Runs.Snapshot(),
-		Incidents:  append([]model.Incident(nil), control.Incidents...),
+		Revision:      control.Revision,
+		CapturedAt:    time.Now().UTC(),
+		Stations:      make([]model.Station, 0, len(control.Stations)),
+		Valves:        make([]model.ValveState, 0, len(control.Valves)),
+		Closures:      make([]model.ClosureState, 0, len(control.Closures)),
+		Pressures:     make([]model.PressureState, 0, len(control.Pressures)),
+		Routes:        make([]model.RouteState, 0, len(control.Routes)),
+		Tracking:      make([]model.TrackingState, 0),
+		Permits:       make([]model.PermitState, 0),
+		Runs:          r.Runs.Snapshot(),
+		Incidents:     append([]model.Incident(nil), control.Incidents...),
+		Pigs:          pigs,
+		Compatibility: compatibility,
 	}
 	for _, value := range control.Stations {
 		snapshot.Stations = append(snapshot.Stations, value)
@@ -590,6 +594,7 @@ func (r *Runtime) RecoverPersistent() (RecoveryReport, error) {
 		}
 	}
 	permit.Restore(r.Permits, permitEvents)
+	pig.Restore(r.Pigs, snapshot.Control.Pigs, snapshot.Control.Compatibility)
 	r.mu.Lock()
 	r.control.Stations = snapshot.Control.StationIndex()
 	r.control.Routes = make(map[string]model.RouteState)

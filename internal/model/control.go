@@ -108,17 +108,19 @@ type OperationRecord struct {
 }
 
 type ControlSnapshot struct {
-	Revision   string          `json:"revision"`
-	CapturedAt time.Time       `json:"captured_at"`
-	Stations   []Station       `json:"stations"`
-	Valves     []ValveState    `json:"valves"`
-	Closures   []ClosureState  `json:"closures"`
-	Pressures  []PressureState `json:"pressures"`
-	Routes     []RouteState    `json:"routes"`
-	Tracking   []TrackingState `json:"tracking"`
-	Permits    []PermitState   `json:"permits"`
-	Runs       []Run           `json:"runs"`
-	Incidents  []Incident      `json:"incidents"`
+	Revision      string          `json:"revision"`
+	CapturedAt    time.Time       `json:"captured_at"`
+	Stations      []Station       `json:"stations"`
+	Valves        []ValveState    `json:"valves"`
+	Closures      []ClosureState  `json:"closures"`
+	Pressures     []PressureState `json:"pressures"`
+	Routes        []RouteState    `json:"routes"`
+	Tracking      []TrackingState `json:"tracking"`
+	Permits       []PermitState   `json:"permits"`
+	Runs          []Run           `json:"runs"`
+	Incidents     []Incident      `json:"incidents"`
+	Pigs          []PigSpec       `json:"pigs"`
+	Compatibility []Compatibility `json:"pig_compatibility"`
 }
 
 func (s Station) Validate() error {
@@ -266,6 +268,11 @@ func (s ControlSnapshot) Validate() error {
 	for _, permit := range s.Permits {
 		if err := permit.Validate(); err != nil {
 			return fmt.Errorf("permit %s: %w", permit.Name, err)
+		}
+	}
+	for _, pig := range s.Pigs {
+		if err := pig.Validate(); err != nil {
+			return fmt.Errorf("pig %s: %w", pig.ID, err)
 		}
 	}
 	return nil
